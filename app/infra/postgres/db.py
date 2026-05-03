@@ -1,32 +1,27 @@
-from contextlib import asynccontextmanager
-from typing import AsyncGenerator
-
-from pydantic import Secret, PostgresDsn
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine, async_sessionmaker, AsyncSession
 
 
 class Database:
-    def __init__(self, dsn: Secret[PostgresDsn], declarative_base: type[DeclarativeBase]):
-        self.engine = create_async_engine(str(dsn.get_secret_value()))
-        self._async_session = async_sessionmaker(self.engine)
-
-        self._declarative_base = declarative_base
-
-    async def shutdown(self) -> None:
-        await self.engine.dispose()
+    def __init__(self, dsn, base):
+        # Преобразуем SecretStr в строку
+        dsn_str = dsn.get_secret_value() if hasattr(dsn, 'get_secret_value') else str(dsn)
+        self._engine: AsyncEngine = create_async_engine(dsn_str, echo=False)
+        self._async_session = async_sessionmaker(
+            bind=self._engine,
+            expire_on_commit=False,
+            class_=AsyncSession,
+        )
+        self.Base = base
 
     async def create_tables(self) -> None:
-        async with self.engine.begin() as conn:
-            await conn.run_sync(self._declarative_base.metadata.create_all)
+        async with self._engine.begin() as conn:
+            await conn.run_sync(self.Base.metadata.create_all)
 
-    @asynccontextmanager
-    async def session(self) -> AsyncGenerator[AsyncSession, None]:
-        session: AsyncSession = self._async_session()
+    async def drop_tables(self) -> None:
+        async with self._engine.begin() as conn:
+            await conn.run_sync(self.Base.metadata.drop_all)
 
-        async with session:
-            try:
-                yield session
-            except Exception:  # noqa: PIE786
-                await session.rollback()
-                raise
+    async def shutdown(self) -> None:
+        """Закрываем engine — освобождаем соединения с БД"""
+        if self._engine:
+            await self._engine.dispose()

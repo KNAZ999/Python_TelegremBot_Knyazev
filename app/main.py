@@ -1,32 +1,112 @@
 import logging
 from typing import Any
 
-from ptbcontrib.postgres_persistence import PostgresPersistence
-from ptbcontrib.roles import setup_roles, RolesHandler
-from telegram.ext import Application as PTBApplication, ApplicationBuilder, JobQueue
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-
+from telegram.ext import Application as PTBApplication, ExtBot, ContextTypes, JobQueue, Updater
 from app.core.users.constants import RolesEnum
 from app.core.users.repositories import UserRepository
 from app.core.users.services import UserService
 from app.handlers import HANDLERS
 from app.infra.postgres.base import Base
-from app.db import Database
+from app.infra.postgres.db import Database
 from app.jobs.sync_roles import sync_roles
 from settings.config import settings
 
-# Убедитесь, что используется pytz
+# Импортируем pytz — обязательно для совместимости с APScheduler
 import pytz
+
+
+# Простая реализация ролей без ptbcontrib.roles
+class RoleManager:
+    def __init__(self):
+        self._roles = {}
+
+    def add_role(self, role_name: str):
+        if role_name not in self._roles:
+            self._roles[role_name] = set()
+
+    def add_user_ids(self, role_name: str, *user_ids: int):
+        if role_name not in self._roles:
+            self.add_role(role_name)
+        self._roles[role_name].update(user_ids)
+
+    def has_user(self, role_name: str, user_id: int) -> bool:
+        return user_id in self._roles.get(role_name, set())
+
+    def get_users(self, role_name: str) -> set[int]:
+        return self._roles.get(role_name, set())
+
+    def __getitem__(self, item):
+        return self._roles[item]
+
+    def __contains__(self, item):
+        return item in self._roles
+
+
+def setup_roles(app):
+    app._roles = RoleManager()
+    return app._roles
 
 
 class Application(PTBApplication):
     def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
+        # Извлекаем нужные параметры
+        token = kwargs.pop('token', None)
+        if not token:
+            raise ValueError("Token is required")
+
+        arbitrary_callback_data = kwargs.pop('arbitrary_callback_data', False)
+        post_init = kwargs.pop('post_init', None)
+        post_shutdown = kwargs.pop('post_shutdown', None)
+        post_stop = kwargs.pop('post_stop', None)
+
+        # Удаляем неподдерживаемые параметры
+        kwargs.pop('context', None)
+
+        # Создаём bot вручную
+        bot = ExtBot(token=token)
+
+        # Создаём updater
+        updater = Updater(bot=bot, update_queue=None)
+
+        # Создаём context_types
+        context_types = ContextTypes()
+
+        # Создаём scheduler с pytz.UTC
+        scheduler = AsyncIOScheduler(timezone=pytz.UTC)
+
+        # Создаём пустой экземпляр JobQueue без вызова __init__
+        job_queue = object.__new__(JobQueue)
+
+        # Устанавливаем только те поля, которые используются при старте
+        # Не устанавливаем _running, _application и другие — они будут установлены при .start()
+        job_queue.scheduler = scheduler  # ← это свойство с setter'ом — безопасно
+
+        # Передаём всё в super()
+        super().__init__(
+            bot=bot,
+            update_queue=None,
+            updater=updater,
+            job_queue=job_queue,
+            update_processor=None,
+            persistence=None,
+            context_types=context_types,
+            post_init=post_init,
+            post_shutdown=post_shutdown,
+            post_stop=post_stop,
+            **kwargs
+        )
+
+        # Настраиваем остальное
         self._roles = setup_roles(self)
         self.database = Database(dsn=settings.POSTGRES_DSN, base=Base)
 
-        user_repository = UserRepository(session_factory=self.database._async_session)
+        # Передаём весь экземпляр database
+        user_repository = UserRepository(database=self.database)
         self.user_service = UserService(repository=user_repository)
+
+        # Вручную устанавливаем arbitrary_callback_data
+        self.arbitrary_callback_data = arbitrary_callback_data
 
     @staticmethod
     async def application_startup(application: "Application") -> None:
@@ -80,23 +160,13 @@ def configure_logging() -> None:
 
 
 def create_app(app_settings: Any) -> Application:
-    # Создаём Application без автоматического создания JobQueue
-    builder = ApplicationBuilder().application_class(Application)
-    builder = builder.token(app_settings.API_TOKEN.get_secret_value())
-    builder = builder.arbitrary_callback_data(True)
-    builder = builder.post_init(Application.application_startup)
-    builder = builder.post_shutdown(Application.application_shutdown)
-
-    # Важно: НЕ вызываем .build() сразу
-
-    # Создаём Application
-    application: Application = builder.application_class(**builder._build_kwargs)  # type: ignore
-
-    # Вручную создаём JobQueue с правильным scheduler
-    scheduler = AsyncIOScheduler(timezone=pytz.UTC)
-    job_queue = JobQueue(scheduler=scheduler)
-    application._job_queue = job_queue
-    application.job_queue.set_application(application)
+    # Создаём Application напрямую
+    application = Application(
+        token=app_settings.API_TOKEN.get_secret_value(),
+        arbitrary_callback_data=True,
+        post_init=Application.application_startup,
+        post_shutdown=Application.application_shutdown,
+    )
 
     return application
 

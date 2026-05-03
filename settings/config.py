@@ -13,10 +13,7 @@ class AppSettings(BaseSettings):
 
     API_TOKEN: SecretStr  # ← Добавлено!
     LOG_LEVEL: str = "INFO"
-
-    POSTGRES_DSN: Secret[PostgresDsn] = Secret(
-        PostgresDsn("postgresql+asyncpg://postgres:postgres@localhost:5432/postgres"))
-
+    POSTGRES_DSN: SecretStr
     ADMIN_INTERFACE_PORT: int = 8001
     ADMIN_SECRET_KEY: SecretStr = SecretStr("secretkey")
     ADMIN_LOGIN: SecretStr = SecretStr("admin")
