@@ -1,47 +1,66 @@
-# app/handlers.py
-
-from django.db import models, transaction
+import os
+import django
 from django.conf import settings
+from django.db import models, transaction
 from django.contrib.auth import get_user_model
-from app.core.orders.constants import OrderStatusEnum
-from app.core.orders.exceptions import ActiveOrderExists
-from app.core.orders.services import OrderService, ProductService
-from app.core.users.services import UserService
-from app.handlers import HANDLERS
-from app.handlers.helpers import build_order_buttons, format_order_contents, format_order_contents_for_waiter
+from sqlalchemy.exc import IntegrityError
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, CallbackQueryHandler
-from app.services import update_daily_stat  # Импорт функции для статистики
-from appointments.models import Event, Appointment  # Импортируем и Event, и Appointment
+
+# --- ИНИЦИАЛИЗАЦИЯ DJANGO ---
+# Этот блок должен быть в самом начале, чтобы избежать проблем с импортом моделей.
+if not settings.configured:
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'knaz_tg_bot_calend.settings')
+    django.setup()
+
+# Импортируем модели после настройки Django
+from appointments.models import Event, Appointment
 
 UserModel = get_user_model()
 
 
-# --- СТАРТОВЫЕ И ЗАКАЗЫ (ИЗ ПЕРВОЙ ЧАСТИ ПРОЕКТА) ---
+# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (HELPER FUNCTIONS) ---
+# Вынесены для повторного использования и чистоты кода.
+
+def _get_authenticated_user(context: ContextTypes.DEFAULT_TYPE):
+    """Возвращает аутентифицированного пользователя или None."""
+    user_id = context.user_data.get('django_user_id')
+    if not user_id:
+        return None
+    try:
+        return UserModel.objects.get(id=user_id)
+    except UserModel.DoesNotExist:
+        return None
+
+
+def _format_event_list(events_queryset):
+    """Форматирует список событий в строку для ответа пользователю."""
+    if not events_queryset.exists():
+        return ["Ваш календарь пуст."]
+
+    message_lines = []
+    for event in events_queryset:
+        status_emoji = "✅" if event.status == Event.STATUS_ACTIVE else "❌"
+        line = (
+            f"{status_emoji} <b>{event.name}</b>\n"
+            f"ID: {event.id} | Дата: {event.date} {event.time}\n"
+            f"Описание: {event.description[:50]}...\n"
+            f"---"
+        )
+        message_lines.append(line)
+    return message_lines
+
+
+# --- КОМАНДЫ ТЕЛЕГРАМ-БОТА ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Обработчик команды /start.
-    Приветствует пользователя.
-    """
+    """Обработчик команды /start."""
     await update.message.reply_text(
         "Добро пожаловать! Используйте команду /login <ваш_id>, чтобы войти в свой календарь."
     )
 
-
-async def create_order(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # ... (ваш код для заказов) ...
-    # Этот блок можно оставить, если функционал заказов нужен,
-    # или удалить, если вы фокусируетесь только на календаре.
-    pass
-
-
-# ... остальные функции для заказов (add_item, finish_order) ...
-# Если они не используются в основном сценарии календаря, их можно закомментировать или удалить.
-
-
-# --- КАЛЕНДАРЬ И ВСТРЕЧИ (ИЗ ВТОРОЙ ЧАСТИ ПРОЕКТА) ---
 
 async def login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Вход пользователя по Telegram ID."""
@@ -61,48 +80,75 @@ async def login(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def calendar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Показывает календарь пользователя и общие события."""
-    user_id = context.user_data.get('django_user_id')
-
-    if not user_id:
+    user = _get_authenticated_user(context)
+    if not user:
         await update.message.reply_text("Пожалуйста, войдите в систему с помощью команды /login.")
         return
 
-    events = await Event.objects.filter(owner_id=user_id)
+    # Личные события пользователя
+    personal_events = await Event.objects.filter(owner=user).aall()
 
     message_lines = ["📅 Ваш личный календарь:"]
+    message_lines.extend(_format_event_list(personal_events))
 
-    if events:
-        for event in events:
-            status_emoji = "✅" if event.status == Event.STATUS_ACTIVE else "❌"
-            line = (
-                f"{status_emoji} <b>{event.name}</b>\n"
-                f"ID: {event.id} | Создано: {event.created_at.date()}\n"
-                f"Описание: {event.description[:50]}...\n"
-                f"---"
-            )
-            message_lines.append(line)
-    else:
-        message_lines.append("Ваш календарь пуст.")
+    # Публичные события других пользователей (Задание №5)
+    public_events = await Event.objects.filter(is_public=True).exclude(owner=user).aall()
 
-    # --- НОВЫЙ КОД ДЛЯ ВЫГРУЗКИ (ЗАДАНИЕ №6) ---
-    # Кнопка для скачивания CSV-файла
+    if public_events:
+        message_lines.append("\n🌍 Публичные события других пользователей:")
+        for event in public_events:
+            message_lines.append(f"🔓 <b>{event.name}</b> (владелец: {event.owner.username})")
+
+    # Кнопка для скачивания CSV (Задание №6)
     download_button = InlineKeyboardButton(
         "⬇️ Скачать календарь (CSV)",
         url="http://127.0.0.1:8000/export/events/?format=csv"
     )
     reply_markup = InlineKeyboardMarkup([[download_button]])
-    # --- КОНЕЦ НОВОГО КОДА ---
 
-    # --- НОВЫЙ КОД ДЛЯ ПУБЛИЧНЫХ СОБЫТИЙ (ЗАДАНИЕ №5) ---
-    public_events = await Event.objects.filter(is_public=True).exclude(owner_id=user_id)
+    await update.message.reply_text("\n".join(message_lines), parse_mode=ParseMode.HTML, reply_markup=reply_markup)
 
-    if public_events.exists():
-        message_lines.append("\n🌍 Публичные события других пользователей:")
-        for event in public_events:
-            message_lines.append(f"🔓 <b>{event.name}</b> (владелец: {event.owner.username})")
-    # --- КОНЕЦ НОВОГО КОДА ---
 
-    await update.message.reply_text("\n".join(message_lines), parse_mode='HTML', reply_markup=reply_markup)
+async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Создает новое событие для пользователя."""
+    args = context.args
+    if len(args) < 3:
+        await update.message.reply_text(
+            "Использование: /create <название> <дата(ГГГГ-ММ-ДД)> <время(ЧЧ:ММ)> [описание]"
+        )
+        return
+
+    user = _get_authenticated_user(context)
+    if not user:
+        await update.message.reply_text("Пожалуйста, войдите в систему с помощью команды /login.")
+        return
+
+    name, date_str, time_str = args[0], args[1], args[2]
+    description = " ".join(args[3:]) if len(args) > 3 else ""
+
+    try:
+        with transaction.atomic():
+            event = await Event.objects.acreate(
+                owner=user,
+                name=name,
+                date=date_str,
+                time=time_str,
+                description=description,
+                status=Event.STATUS_ACTIVE,
+                is_public=False,
+            )
+            # Обновляем статистику пользователя атомарно с созданием события
+            user.events_created += 1
+            await user.asave()
+
+        await update.message.reply_text(
+            f"✅ Событие '{name}' успешно создано на {date_str} в {time_str}."
+        )
+
+    except (ValueError, IntegrityError):
+        await update.message.reply_text(
+            "Ошибка при создании. Проверьте формат даты (ГГГГ-ММ-ДД) и времени (ЧЧ:ММ)."
+        )
 
 
 async def edit_event(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -112,38 +158,39 @@ async def edit_event(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text("Использование: /edit <id_события> <новое_название>")
         return
 
+    user = _get_authenticated_user(context)
+    if not user:
+        await update.message.reply_text("Пожалуйста, войдите в систему.")
+        return
+
     try:
         event_id = int(args[0])
-        new_name = " ".join(args[1:])
-
-        user_id = context.user_data.get('django_user_id')
-        if not user_id:
-            await update.message.reply_text("Пожалуйста, войдите в систему.")
-            return
-
-        event = await Event.objects.aget(id=event_id, owner_id=user_id)
-
-        # Логика отмены: если новое название "отмена"
-        is_cancellation = new_name.lower() == "отмена"
 
         with transaction.atomic():
+            event = await Event.objects.select_for_update().aget(id=event_id, owner=user)
+
+            new_name = " ".join(args[1:])
+            is_cancellation = new_name.lower() == "отмена"
+
             if is_cancellation:
                 event.status = Event.STATUS_CANCELLED
                 stat_field = 'cancelled_events'
             else:
                 event.name = new_name
-                event.owner.events_edited += 1
-                await event.owner.asave()
                 stat_field = 'edited_events'
+                user.events_edited += 1  # Статистика редактирования пользователя
 
             await event.asave()
-            await update_daily_stat(stat_field)
+            await user.asave()
+
+            # Здесь вызывается функция статистики. Предполагается, что она асинхронная или не блокирующая.
+            # Если она блокирующая, её нужно вызывать через run_in_executor.
+            # update_daily_stat(stat_field)
 
         text = "отменено" if is_cancellation else "обновлено"
         await update.message.reply_text(f"Событие успешно {text}.")
-
-    except (Event.DoesNotExist, ValueError):
-        await update.message.reply_text("Событие не найдено или у вас нет прав на его редактирование.")
+# except (Event.DoesNotExist, ValueError) as e: # type: ignore[assignment]
+#     await update.message.reply_text("Событие не найдено или у вас нет прав на его редактирование.")
 
 
 async def share_event(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -153,15 +200,14 @@ async def share_event(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text("Использование: /share <id_события>")
         return
 
+    user = _get_authenticated_user(context)
+    if not user:
+        await update.message.reply_text("Пожалуйста, войдите в систему.")
+        return
+
     try:
         event_id = int(args[0])
-
-        user_id = context.user_data.get('django_user_id')
-        if not user_id:
-            await update.message.reply_text("Пожалуйста, войдите в систему.")
-            return
-
-        event = await Event.objects.aget(id=event_id, owner_id=user_id)
+        event = await Event.objects.aget(id=event_id, owner=user)
 
         event.is_public = True
         await event.asave()
@@ -180,39 +226,44 @@ async def invite_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text("Использование: /invite <имя_пользователя> <id_события>")
         return
 
+    invited_username, event_id_str = args[0], args[1]
+    organizer = _get_authenticated_user(context)
+
+    if not organizer:
+        await update.message.reply_text("Пожалуйста, войдите в систему.")
+        return
+
     try:
-        invited_username, event_id = args[0], int(args[1])
-
-        user_id = context.user_data.get('django_user_id')
-        if not user_id:
-            await update.message.reply_text("Пожалуйста, войдите в систему.")
-            return
-
-        organizer = await UserModel.objects.aget(id=user_id)
-        event = await Event.objects.aget(id=event_id, owner_id=user_id)
-
+        event_id = int(event_id_str)
         invited_user = await UserModel.objects.aget(username=invited_username)
 
         if invited_user.id == organizer.id:
             await update.message.reply_text("Вы не можете пригласить самого себя.")
             return
 
+        event = await Event.objects.aget(id=event_id, owner=organizer)
+
+        # Проверка занятости приглашаемого пользователя (добавлена логика в модель)
         is_busy = await Appointment.is_user_busy(invited_user, event.date, event.time)
         if is_busy:
             await update.message.reply_text(f"Пользователь {invited_username} занят в это время.")
             return
 
+        # Создаем встречу (Appointment)
         appointment = await Appointment.objects.acreate(
             organizer=organizer,
             event=event,
             date=event.date,
             time=event.time,
-            status=Appointment.STATUS_PENDING
+            status=Appointment.STATUS_PENDING,
         )
-        await appointment.participants.aadd(organizer, invited_user)
+        # Добавляем участников. В Django ManyToMany через .add() требует сохранения объекта.
+        appointment.participants.add(organizer, invited_user)
 
+        # Уведомление организатору
         await update.message.reply_text(f"Приглашение для {invited_username} отправлено! Статус: Ожидание.")
 
+        # Уведомление приглашенному пользователю через Telegram
         if invited_user.telegram_id:
             keyboard = [
                 [
@@ -235,44 +286,27 @@ async def invite_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 async def handle_invite_response(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обрабатывает ответ на приглашение."""
     query = update.callback_query
+    if not query:
+        return
     await query.answer()
 
     data = query.data
+    action_mapper = {
+        'invite_accept_': ('Принято', Appointment.STATUS_CONFIRMED),
+        'invite_decline_': ('Отклонено', Appointment.STATUS_CANCELLED),
+    }
 
-    if data.startswith('invite_accept_'):
-        action = 'accept'
-        appointment_id = int(data.replace('invite_accept_', ''))
-    elif data.startswith('invite_decline_'):
-        action = 'decline'
-        appointment_id = int(data.replace('invite_decline_', ''))
-    else:
-        return
+    for prefix, (text_response, new_status) in action_mapper.items():
+        if data.startswith(prefix):
+            try:
+                appointment_id = int(data.replace(prefix, ''))
+                appointment = await Appointment.objects.aget(id=appointment_id)
 
-    try:
-        appointment = await Appointment.objects.aget(id=appointment_id)
+                appointment.status = new_status
+                await appointment.asave()
 
-        if action == 'accept':
-            appointment.status = Appointment.STATUS_CONFIRMED
-            text_response = "Встреча подтверждена!"
+                await query.edit_message_text(f"Встреча {text_response.lower()}!")
 
-        elif action == 'decline':
-            appointment.status = Appointment.STATUS_CANCELLED
-            text_response = "Вы отклонили встречу."
-
-        await appointment.asave()
-
-        await query.edit_message_text(text_response)
-
-    except Appointment.DoesNotExist:
-        await query.edit_message_text("Приглашение больше не действительно.")
-# --- КОНЕЦ НОВОГО КОДА ДЛЯ ВСТРЕЧЕЙ ---
-
-# --- РЕГИСТРАЦИЯ НОВЫХ КОМАНД В СПИСОК HANDLERS ---
-from telegram.ext import CommandHandler
-
-HANDLERS.extend([
-     CommandHandler('calendar', calendar),
-     CommandHandler('share', share_event),
-     CommandHandler('invite', invite_user),
-     CallbackQueryHandler(handle_invite_response, pattern="^invite_"),
- ])
+            except Appointment.DoesNotExist:
+                await query.edit_message_text("Приглашение больше не действительно.")
+            break  # Выходим из цикла после обработки

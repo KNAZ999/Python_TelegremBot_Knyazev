@@ -1,11 +1,13 @@
-pydantic-settings
-sqladmin
-uvicorn
-fastapi
-starlette[full]
-itsdangerous
-python-multipart
+Django==5.2.14
+djangorestframework>=3.16.0
+python-telegram-bot>=21.6
+ptbcontrib @ git+https://github.com/python-telegram-bot/ptbcontrib.git
 asyncpg
 SQLAlchemy
-python-telegram-bot[job-queue]==20.8
-ptbcontrib[roles] @ git+https://github.com/python-telegram-bot/ptbcontrib.git
+pytest>=7.0.0
+pytest-mock>=3.0.0
+pytest-django>=4.5.0
+psycopg2-binary>=2.9.3
+gunicorn
+django-grappelli
+# ... и другие зависимости ...

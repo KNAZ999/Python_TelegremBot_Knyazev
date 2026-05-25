@@ -24,3 +24,10 @@ class CustomUser(AbstractUser):
     def __str__(self):
         # Отображает имя пользователя или его ID, если имени нет
         return self.username or f"User_{self.telegram_id}"
+
+    # --- ДОБАВЬТЕ ЭТОТ БЛОК META ---
+    class Meta:
+        # Говорим Django использовать таблицу с именем 'users'
+        db_table = 'users'
+        verbose_name = 'Пользователь'
+        verbose_name_plural = 'Пользователи'

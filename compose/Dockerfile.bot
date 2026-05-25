@@ -1,0 +1,21 @@
+# compose/Dockerfile.bot
+
+# 1. Базовый образ с Python
+FROM python:3.11-slim
+
+# 2. Создаем рабочую директорию
+WORKDIR /bot
+
+# 3. Копируем ВЕСЬ проект (включая requirements.txt) в контейнер
+COPY . /bot/
+
+# 4. Устанавливаем системные зависимости (ДО установки Python-библиотек!)
+# Нам нужен git, чтобы pip мог скачать ptbcontrib из репозитория
+RUN apt-get update && apt-get install -y gcc python3-dev git
+
+# 5. Устанавливаем зависимости Python
+RUN pip install --upgrade pip
+RUN pip install -r requirements_bot.txt
+
+# 6. Команда для запуска бота
+CMD ["python", "-m", "app.main"]

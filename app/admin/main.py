@@ -22,17 +22,17 @@ class AdminApplication:
         self.admin.add_view(OrderAdmin)
 
 
-def create_app() -> Starlette:
-    app = AdminApplication(AppSettings())
-    return app.web_app
+def create_app(settings: AppSettings):
+    admin_app = AdminApplication(settings)
+    return admin_app.web_app
 
 
 if __name__ == '__main__':
     settings = AppSettings()
     uvicorn.run(
         "app.admin.main:create_app",
+        factory=True,
         host="localhost",
         port=settings.ADMIN_INTERFACE_PORT,
         log_level="info",
-        workers=1,
     )

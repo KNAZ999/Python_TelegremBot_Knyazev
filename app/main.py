@@ -2,7 +2,8 @@ import logging
 from typing import Any
 
 from ptbcontrib.roles import setup_roles
-from telegram import InlineKeyboardButton
+from sqlalchemy import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application as PTBApplication, ApplicationBuilder, JobQueue, ContextTypes
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -13,6 +14,7 @@ from app.handlers import HANDLERS
 from app.infra.postgres.base import Base
 from app.db import Database
 from app.jobs.sync_roles import sync_roles
+from appointments.models import BotStatistics
 from settings.config import settings
 import os
 import django
@@ -31,7 +33,7 @@ django.setup()
 
 
 # Импорт модели статистики после настройки Django
-from events import BotStatistics
+# from events import BotStatistics
 
 
 class Application(PTBApplication):

@@ -1,9 +1,7 @@
-# appointments/api_urls.py
-
 from django.urls import path
-from .api_views import PublicEventListAPIView, MyEventsListCreateAPIView
+from . import api_views
 
 urlpatterns = [
-    path('public/', PublicEventListAPIView.as_view(), name='api-events-public'),
-    path('my/', MyEventsListCreateAPIView.as_view(), name='api-events-my'),
+    path('public/', api_views.PublicEventListAPIView.as_view(), name='api-events-public'),
+    path('my/', api_views.MyEventsListCreateAPIView.as_view(), name='api-events-my'),
 ]

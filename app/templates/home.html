@@ -1,0 +1,27 @@
+<!-- templates/home.html -->
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Мой Календарь</title>
+    <style>
+        /* Простое оформление, чтобы было красиво */
+        body { font-family: Arial, sans-serif; background: #f0f2f5; color: #333; }
+        .container { max-width: 600px; margin: 100px auto; padding: 20px; background: #fff; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+        h1 { color: #004085; }
+        a { display: inline-block; margin-top: 20px; padding: 12px 25px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; }
+        a:hover { background: #0056b3; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📅 Добро пожаловать в Календарь!</h1>
+        <p>Здесь вы можете управлять своими встречами и задачами.</p>
+
+        <!-- Кнопка для скачивания календаря -->
+        <a href="/export/events/?format=csv">
+            ⬇️ Скачать календарь в формате CSV
+        </a>
+    </div>
+</body>
+</html>

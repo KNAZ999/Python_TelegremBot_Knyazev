@@ -9,7 +9,7 @@ https://docs.djangoproject.com/en/5.2/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
-
+import sys
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -31,6 +31,8 @@ ALLOWED_HOSTS = []
 # Application definition
 
 INSTALLED_APPS = [
+    'grappelli',  # <-- ДОБАВЬ СЮДА
+    'grappelli.dashboard',  # <-- И СЮДА
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -38,8 +40,9 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'knaz_tg_bot_calend',
-    'appointments', # Приложение для встреч
+    'app',
     'users',
+    'appointments', # Приложение для встреч
     'rest_framework',# Приложение для профилей пользователей
 ]
 
@@ -78,8 +81,14 @@ WSGI_APPLICATION = 'knaz_tg_bot_calend.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        # Используем postgresql, а не sqlite3
+        'ENGINE': 'django.db.backends.postgresql',
+        # Имя БД должно совпадать с тем, что ты указал в docker-compose.yml (calendar_db)
+        'NAME': 'calendar_db',
+        'USER': 'user',         # Должно совпадать с POSTGRES_USER в compose
+        'PASSWORD': '360294', # Должно совпадать с POSTGRES_PASSWORD
+        'HOST': 'db',           # Это ОЧЕНЬ ВАЖНО. Имя сервиса из docker-compose!
+        'PORT': '5432',
     }
 }
 
@@ -128,3 +137,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # knaz_tg_bot_calend/settings.py
 
 AUTH_USER_MODEL = 'users.CustomUser'
+
+
+    # Отключаем ненужные вещи для ускорения тестов
+EMAIL_BACKEND = 'django.core.mail.backends.dummy.EmailBackend'

@@ -61,6 +61,7 @@ class Event(models.Model):
         verbose_name = "Событие"
         verbose_name_plural = "События"
         ordering = ['-created_at']
+        db_table = 'events'
 
     def __str__(self):
         return self.name

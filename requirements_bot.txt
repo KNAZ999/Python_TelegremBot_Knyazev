@@ -1,0 +1,9 @@
+python-telegram-bot>=21.6
+ptbcontrib[roles] @ git+https://github.com/python-telegram-bot/ptbcontrib.git
+SQLAlchemy
+pydantic
+psycopg2-binary
+Django
+djangorestframework
+pydantic-settings>=2.0
+pytz

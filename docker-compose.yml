@@ -1,13 +1,46 @@
+# docker-compose.yml
+
 services:
+  # --- БАЗА ДАННЫХ (PostgreSQL) ---
   db:
-    image: postgres:16.3
-    volumes:
-      - postgres:/var/lib/postgresql
+    image: postgres:15-alpine
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: postgres
+      POSTGRES_DB: calendar_db
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: "360294"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  # --- ВЕБ-ПРИЛОЖЕНИЕ (Django/API) ---
+  web:
+    build:
+      context: .               # Контекст - текущая папка (где лежит docker-compose.yml)
+      dockerfile: compose/Dockerfile.web
+    command: bash -c "python manage.py migrate && gunicorn knaz_tg_bot_calend.wsgi:application --bind 0.0.0.0:8000"
     ports:
-      - 5432:5432
+      - "8000:8000"
+    volumes:
+      - .:/app                 # Монтируем код для "горячей" перезагрузки
+    depends_on:
+      - db
+    env_file:
+      - .env                  # Читаем переменные (SECRET_KEY, DSN)
+    restart: unless-stopped
+
+  # --- ТЕЛЕГРАМ-БОТ ---
+  bot:
+    build:
+      context: .               # Контекст - текущая папка
+      dockerfile: compose/Dockerfile.bot
+    volumes:
+      - .:/bot                 # Монтируем код бота
+      - ./requirements_bot.txt:/bot/requirements_bot.txt # <-- НОВАЯ СТРОКА! Копируем файл зависимостей
+    depends_on:
+      - db                    # Бот не запустится без базы данных
+    env_file:
+      - .env                  # Читаем API_TOKEN
+    restart: unless-stopped
+
 volumes:
-  postgres:
+  db_data: {}

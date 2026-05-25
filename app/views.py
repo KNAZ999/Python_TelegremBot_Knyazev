@@ -5,7 +5,12 @@ import json
 from django.http import HttpResponse
 from django.contrib.auth.decorators import login_required
 from appointments.models import Event
-
+from django.shortcuts import render
+def home(request):
+    """
+    Главная страница сайта.
+    """
+    return render(request, 'home.html')
 
 @login_required
 def export_events(request):
